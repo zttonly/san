@@ -24,8 +24,7 @@ var changeExprCompare = require('../runtime/change-expr-compare');
 var DataChangeType = require('../runtime/data-change-type');
 var insertBefore = require('../browser/insert-before');
 var un = require('../browser/un');
-var defineComponent = require('./define-component');
-var ComponentLoader = require('./component-loader');
+var preprocessComponents = require('./preprocess-components');
 var createNode = require('./create-node');
 var preheatEl = require('./preheat-el');
 var parseComponentTemplate = require('./parse-component-template');
@@ -34,7 +33,7 @@ var LifeCycle = require('./life-cycle');
 var getANodeProp = require('./get-a-node-prop');
 var isDataChangeByElement = require('./is-data-change-by-element');
 var getEventListener = require('./get-event-listener');
-var reverseElementChildren = require('./reverse-element-children');
+var hydrateElementChildren = require('./hydrate-element-children');
 var NodeType = require('./node-type');
 var styleProps = require('./style-props');
 var nodeSBindInit = require('./node-s-bind-init');
@@ -87,6 +86,7 @@ function Component(options) { // eslint-disable-line
     this.filters = this.filters || clazz.filters || {};
     this.computed = this.computed || clazz.computed || {};
     this.messages = this.messages || clazz.messages || {};
+    this.ssr = this.ssr || clazz.ssr;
 
     if (options.transition) {
         this.transition = options.transition;
@@ -130,20 +130,7 @@ function Component(options) { // eslint-disable-line
     // pre define components class
     /* istanbul ignore else  */
     if (!proto.hasOwnProperty('_cmptReady')) {
-        proto.components = clazz.components || proto.components || {};
-        var components = proto.components;
-
-        for (var key in components) { // eslint-disable-line
-            var cmptClass = components[key];
-            if (typeof cmptClass === 'object' && !(cmptClass instanceof ComponentLoader)) {
-                components[key] = defineComponent(cmptClass);
-            }
-            else if (cmptClass === 'self') {
-                components[key] = clazz;
-            }
-        }
-
-        proto._cmptReady = 1;
+        preprocessComponents(clazz);
     }
 
     // compile
@@ -169,7 +156,7 @@ function Component(options) { // eslint-disable-line
     proto.aNode._i++;
 
 
-    // #[begin] reverse
+    // #[begin] hydrate
     // 组件反解，读取注入的组件数据
     if (this.el) {
         var firstCommentNode = this.el.firstChild;
@@ -303,27 +290,41 @@ function Component(options) { // eslint-disable-line
     this._sbindData = nodeSBindInit(this.aNode.directives.bind, this.data, this);
     this._toPhase('inited');
 
-    // #[begin] reverse
-    var reverseWalker = options.reverseWalker;
-    if (this.el || reverseWalker) {
-        if (this.aNode.Clazz || this.components[this.aNode.tagName]) {
-            if (!reverseWalker) {
-                reverseWalker = new DOMChildrenWalker(this.el.parentNode, this.el);
+    // #[begin] hydrate
+    var hydrateWalker = options.hydrateWalker;
+    var aNode = this.aNode;
+    if (hydrateWalker) {
+        if (this.ssr === 'client-render') {
+            this.attach(hydrateWalker.target, hydrateWalker.current);
+        }
+        else {
+            if (aNode.Clazz || this.components[aNode.tagName]) {
+                this._rootNode = createHydrateNode(aNode, this, this.data, this, hydrateWalker);
+                this._rootNode._getElAsRootNode && (this.el = this._rootNode._getElAsRootNode());
             }
-            
-            this._rootNode = createReverseNode(this.aNode, this, this.data, this, reverseWalker);
+            else {
+                var currentNode = hydrateWalker.current;
+                if (currentNode && currentNode.nodeType === 1) {
+                    this.el = currentNode;
+                    hydrateWalker.goNext();
+                }
+
+                hydrateElementChildren(this, this.data, this);
+            }
+
+            this._toPhase('created');
+            this._attached();
+            this._toPhase('attached');
+        }
+    }
+    else if (this.el) {
+        if (aNode.Clazz || this.components[aNode.tagName]) {
+            hydrateWalker = new DOMChildrenWalker(this.el.parentNode, this.el);
+            this._rootNode = createHydrateNode(aNode, this, this.data, this, hydrateWalker);
             this._rootNode._getElAsRootNode && (this.el = this._rootNode._getElAsRootNode());
         }
         else {
-            if (reverseWalker) {
-                var currentNode = reverseWalker.current;
-                if (currentNode && currentNode.nodeType === 1) {
-                    this.el = currentNode;
-                    reverseWalker.goNext();
-                }
-            }
-
-            reverseElementChildren(this, this.data, this);
+            hydrateElementChildren(this, this.data, this);
         }
 
         this._toPhase('created');

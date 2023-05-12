@@ -7,7 +7,7 @@
 const fs = require('fs');
 const path = require('path');
 
-let htmlTpl = fs.readFileSync(path.resolve(__dirname, 'index-reverse.html.tpl'), 'UTF-8');
+let htmlTpl = fs.readFileSync(path.resolve(__dirname, 'index-hydrate.html.tpl'), 'UTF-8');
 let html = '';
 let specTpls = '';
 
@@ -15,27 +15,33 @@ let specTpls = '';
 function genContent({ componentClass, componentSource, compontentData, componentDataLiteral, specTpl, dirName, result}) {
     let id = dirName;
     let noDataOutput = /-ndo$/.test(dirName);
+    let noInject = false;
 
     // if no inject mark, add it
     if (!/\/\/\s*\[inject\]/.test(specTpl)) {
         specTpl = specTpl.replace(/function\s*\([a-z0-9_,$\s]*\)\s*\{/, function ($0) {
             return $0 + '\n// [inject] init';
         });
+        noInject = true;
     }
 
     html += `<div id="${id}">${result}</div>\n\n`;
 
     let preCode = `
         ${componentSource}
+    `;
+    if (!noInject) {
+        preCode += `        
         var wrap = document.getElementById('${id}');
         var myComponent = new MyComponent({
             el: wrap.firstChild
-    `;
-
-    if (noDataOutput) {
-        preCode += ',data:' + componentDataLiteral
+            `;
+        if (noDataOutput) {
+            preCode += ',data:' + componentDataLiteral
+        }
+        preCode += '        });'
     }
-    preCode += '        });'
+
     specTpl = specTpl.replace(/\/\/\s*\[inject\]\s* init/, preCode);
     specTpls += specTpl;
 };
@@ -112,7 +118,7 @@ function buildFile(filePath) {
 
         // iterate
         if (isDir) {
-            console.log(`[Build Reverse Spec] ${filename}`);
+            console.log(`[Build Hydrate Spec] ${filename}`);
             buildFile(abFilePath);
         }
     });
@@ -143,20 +149,20 @@ function writeIn({htmlTpl, html, specTpls}) {
     );
 
     fs.writeFileSync(
-        path.resolve(__dirname, 'index-reverse.html'),
+        path.resolve(__dirname, 'index-hydrate.html'),
         htmlTpl.replace('##rendered-elements##', html),
         'UTF-8'
     );
 
     fs.writeFileSync(
-        path.resolve(__dirname, 'reverse.spec.js'),
+        path.resolve(__dirname, 'hydrate.spec.js'),
         specTpls,
         'UTF-8'
     );
 };
 
 console.log();
-console.log('----- Build Reverse Specs -----');
+console.log('----- Build Hydrate Specs -----');
 
 
 buildFile(path.join(__dirname, '../node_modules/san-html-cases/src'));
